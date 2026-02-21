@@ -1,0 +1,14 @@
+{
+  "TDS": 1000.0,
+  "PH": 7.2,
+  "WaterQuality": "Very Poor",
+  "PHStatus": "Normal",
+  "DrinkingStatus": "Not Safe",
+  "RiskLevel": "High",
+  "Recommendation": "Not suitable for direct drinking due to high TDS. Consider treatment or alternate source.",
+  "ProbaSafe": null,
+  "SwitchBoardBrand": "Anchor",
+  "FaucetBrand": "Hindware",
+  "WashBasinBrand": "Cera",
+  "WCBrand": "Hindware"
+}

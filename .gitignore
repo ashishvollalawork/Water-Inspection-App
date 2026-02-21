@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Streamlit
+.streamlit/
+.streamlit_cache/
+*.streamlit.app
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Session/Cache
+.cache
+*.log
+
+# Local inspection data (optional - keep if you want to preserve last inspection)
+# last_inspection.json
+
+# Keep artifacts (ML models)
+# artifacts/
