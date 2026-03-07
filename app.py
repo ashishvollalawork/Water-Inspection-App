@@ -2,6 +2,7 @@ import os
 import io
 import json
 import time
+import re
 import numpy as np
 import pandas as pd
 import joblib
@@ -96,24 +97,12 @@ html, body { background: var(--bg); min-height: 100vh; }
     color:#1b2a41;
 }
 
-./* Ensure inputs are visible across Streamlit versions */
-input[type="number"],
-input[type="text"],
-[data-testid="stNumberInput"] input,
-[data-testid="stTextInput"] input,
-.stNumberInput input,
-.stTextInput input,
 .stNumberInput > div > div > input,
 .stTextInput > div > input {
-        border-radius:12px !important;
-        border:2px solid #c7d3e3 !important;
-        padding:14px 18px !important;
-        background:#ffffff !important;
-        animation:slideInLeft 450ms var(--easing) both;
-        transition:all 220ms var(--easing) !important;
-        font-size:1.05rem !important;
-        font-weight:500 !important;
-        backdrop-filter:blur(10px);
+    border-radius:12px !important; border:2px solid #c7d3e3 !important;
+    padding:14px 18px !important; background:#ffffff !important;
+    animation:slideInLeft 450ms var(--easing) both; transition:all 220ms var(--easing) !important;
+  font-size:1.05rem !important; font-weight:500 !important; backdrop-filter:blur(10px);
 }
 .stNumberInput > div > div > input:focus,
 .stTextInput > div > input:focus {
@@ -450,6 +439,60 @@ def get_safe_index(options, value):
         return options.index(value)
     return 0
 
+def _extract_numeric_candidates(text: str):
+    if not text:
+        return []
+    return [float(x) for x in re.findall(r"\d+(?:\.\d+)?", text)]
+
+def read_meter_value_from_image(uploaded_file, meter_type: str):
+    """Read numeric meter value from uploaded image using OCR."""
+    if uploaded_file is None:
+        return None, "No image uploaded."
+
+    try:
+        import pytesseract
+        from PIL import Image, ImageOps, ImageFilter
+    except Exception:
+        return None, "OCR not available. Install pytesseract and Tesseract OCR."
+
+    try:
+        raw = uploaded_file.getvalue()
+        if not raw:
+            return None, "Empty image file."
+
+        base = Image.open(io.BytesIO(raw)).convert("L")
+        boosted = ImageOps.autocontrast(base)
+        thresh = boosted.point(lambda p: 255 if p > 145 else 0)
+        sharpened = boosted.filter(ImageFilter.SHARPEN)
+        candidates = []
+        whitelist_cfg = "-c tessedit_char_whitelist=0123456789."
+        configs = [f"--psm 6 {whitelist_cfg}", f"--psm 7 {whitelist_cfg}"]
+
+        for img in [base, boosted, thresh, sharpened]:
+            for cfg in configs:
+                text = pytesseract.image_to_string(img, config=cfg)
+                candidates.extend(_extract_numeric_candidates(text))
+
+        if meter_type == "tds":
+            valid = [v for v in candidates if 0 <= v <= 3000]
+            if not valid:
+                return None, "Could not detect TDS value from image."
+            value = float(round(valid[0], 1))
+            return value, f"Detected TDS: {value} mg/L"
+
+        valid = [v for v in candidates if 0 <= v <= 14]
+        if not valid:
+            # Common OCR issue: reads pH 7.1 as 71
+            scaled = [v / 10.0 for v in candidates if 0 <= v <= 140]
+            valid = [v for v in scaled if 0 <= v <= 14]
+        if not valid:
+            return None, "Could not detect pH value from image."
+        value = float(round(valid[0], 1))
+        return value, f"Detected pH: {value}"
+
+    except Exception:
+        return None, "OCR failed. Ensure image is clear and Tesseract is installed."
+
 # ------------- UI -------------
 
 # Header banner
@@ -475,6 +518,14 @@ ensure_last_json_ui()
 model, le = load_model_and_encoder()
 brands = load_brand_master()
 last = load_last()
+
+# Apply deferred OCR updates before widgets are created.
+if st.session_state.pop("pending_ocr_apply", False):
+    if "ocr_tds_value" in st.session_state:
+        st.session_state["tds_input"] = float(st.session_state.pop("ocr_tds_value"))
+    if "ocr_ph_value" in st.session_state:
+        st.session_state["ph_input"] = float(st.session_state.pop("ocr_ph_value"))
+    st.session_state.pop("analysis_result", None)
 
 # Apply deferred reset before widgets are instantiated.
 if st.session_state.pop("pending_form_reset", False):
@@ -538,14 +589,34 @@ with left_col:
     ph_img = st.file_uploader("Upload pH meter photo (PNG/JPG/JPEG/WEBP)", type=["png","jpg","jpeg","webp"], key="ph_img")
     st.caption("pH image: meter display with pH number clearly visible.")
 
+    if st.button("📸 Read values from images", use_container_width=True):
+        tds_val, tds_msg = read_meter_value_from_image(tds_img, "tds")
+        ph_val, ph_msg = read_meter_value_from_image(ph_img, "ph")
+        st.session_state["ocr_feedback"] = f"TDS: {tds_msg} | pH: {ph_msg}"
+
+        if tds_val is not None:
+            st.session_state["ocr_tds_value"] = tds_val
+        if ph_val is not None:
+            st.session_state["ocr_ph_value"] = ph_val
+
+        if (tds_val is not None) or (ph_val is not None):
+            st.session_state["pending_ocr_apply"] = True
+            try:
+                st.rerun()
+            except Exception:
+                st.experimental_rerun()
+
+    if "ocr_feedback" in st.session_state:
+        st.info(st.session_state["ocr_feedback"])
+
     # Preview images
     prev_cols = st.columns(2)
     if tds_img:
         with prev_cols[0]:
-            st.image(tds_img, caption="TDS Meter Reading", use_column_width=True)
+            st.image(tds_img, caption="TDS Meter Reading", use_container_width=True)
     if ph_img:
         with prev_cols[1]:
-            st.image(ph_img, caption="pH Meter Reading", use_column_width=True)
+            st.image(ph_img, caption="pH Meter Reading", use_container_width=True)
 
     if not tds_img and not ph_img:
         st.caption("Tip: Add meter photos to include them in your PDF report.")
